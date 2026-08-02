@@ -32,6 +32,12 @@ jobs:
           cd ${{ env.OWRT_DIR }}
           git checkout ${{ env.OWRT_BRANCH }}
 
+      # 新增：拉取 Argon 主题与配置插件
+      - name: Pull Argon Theme & Argon Config
+        run: |
+          git clone https://github.com/jerrykuku/luci-theme-argon.git ${{ env.OWRT_DIR }}/package/luci-theme-argon
+          git clone https://github.com/jerrykuku/luci-app-argon-config.git ${{ env.OWRT_DIR }}/package/luci-app-argon-config
+
       - name: Embed LuCI default Chinese config
         run: |
           mkdir -p ${{ env.OWRT_DIR }}/files/etc/config
@@ -39,7 +45,7 @@ jobs:
             echo "config core 'main'"
             echo "        option lang 'zh-cn'"
             echo "        option mediaurlbase '/luci-static/bootstrap/'"
-            echo "        option theme 'bootstrap'"
+            echo "        option theme 'argon'"
           } > ${{ env.OWRT_DIR }}/files/etc/config/luci
 
       - name: Load feeds and build config
