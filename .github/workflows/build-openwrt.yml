@@ -13,40 +13,44 @@ jobs:
       - name: 检出仓库配置文件
         uses: actions/checkout@v4
 
-      - name: 修复DNS + 安装依赖
+      - name: 安装编译依赖
         run: |
           set -x
-          # 更换公共DNS防止解析失败
-          echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
-          sudo apt update
+          sudo apt update -y
           sudo apt install -y build-essential libncurses-dev gawk flex bison qemu-utils git wget curl unzip libssl-dev rsync python3-pip ca-certificates
 
-      - name: 拉取OpenWrt源码（增加重试3次）
+      - name: 克隆OpenWrt源码（3次重试）
         run: |
           set -x
-          for i in {1..3}; do
-            git clone https://github.com/openwrt/openwrt.git openwrt && break
-            echo "克隆失败，等待30s重试，第$i次"
-            sleep 30
-          done
+          retry_git() {
+            for i in {1..3}; do
+              git clone https://github.com/openwrt/openwrt.git openwrt && return 0
+              echo "克隆失败，等待40s重试 第$i次"
+              sleep 40
+            done
+            echo "源码克隆彻底失败"
+            exit 1
+          }
+          retry_git
           cd openwrt
           git checkout ${{ env.OPENWRT_BRANCH }}
 
-      - name: 复制配置与脚本，修复换行符
+      - name: 复制配置、统一换行符LF
         run: |
           set -x
           cp -f .config openwrt/
           cp -f diy.sh openwrt/
           chmod +x openwrt/diy.sh
           sed -i 's/\r$//' openwrt/diy.sh
+          ls -lh openwrt/
 
-      - name: 执行DIY初始化脚本
+      - name: 执行 diy.sh
         run: |
           set -x
           cd openwrt
-          ./diy.sh
+          ./diy.sh 2>&1 | tee build_diy.log
 
-      - name: 预下载软件包
+      - name: 预下载源码包
         run: |
           set -x
           cd openwrt
@@ -58,8 +62,15 @@ jobs:
           cd openwrt
           make -j$(nproc)
 
-      - name: 上传固件成品
+      - name: 上传固件
         uses: actions/upload-artifact@v4
         with:
           name: OpenWrt-x86_64-ext4
           path: openwrt/bin/targets/x86/64/*.img
+
+      - name: 上传DIY运行日志（排错必备）
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-log
+          path: openwrt/build_diy.log
