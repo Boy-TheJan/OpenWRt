@@ -1,23 +1,21 @@
 #!/bin/bash
 set -e
-# GH代理加速地址
-GH_PROXY="https://mirror.ghproxy.com/"
 
-# feeds链接全局替换，增加代理
-sed -i "s|https://git.openwrt.org/feed|${GH_PROXY}https://github.com/openwrt|g" feeds.conf.default
+# feeds.conf.default 原始链接，不添加代理
+sed -i 's|https://git.openwrt.org/feed|https://github.com/openwrt|g' feeds.conf.default
 
 # =========第三方插件源=========
 # TurboACC
-curl -m 30 -sSL ${GH_PROXY}https://raw.githubusercontent.com/chenmozhijin/turboacc/luci/add_turboacc.sh -o add_turboacc.sh
+curl -m 30 -sSL https://raw.githubusercontent.com/chenmozhijin/turboacc/luci/add_turboacc.sh -o add_turboacc.sh
 bash add_turboacc.sh --no-sfe
 rm -f add_turboacc.sh
 
 # AdGuardHome
-echo "src-git adguardhome ${GH_PROXY}https://github.com/rufengsuixing/luci-app-adguardhome.git" >> feeds.conf.default
+echo "src-git adguardhome https://github.com/rufengsuixing/luci-app-adguardhome.git" >> feeds.conf.default
 
 # PassWall
-echo "src-git passwall ${GH_PROXY}https://github.com/xiaorouji/openwrt-passwall.git;main" >> feeds.conf.default
-echo "src-git passwall_packages ${GH_PROXY}https://github.com/xiaorouji/openwrt-passwall-packages.git;main" >> feeds.conf.default
+echo "src-git passwall https://github.com/xiaorouji/openwrt-passwall.git;main" >> feeds.conf.default
+echo "src-git passwall_packages https://github.com/xiaorouji/openwrt-passwall-packages.git;main" >> feeds.conf.default
 
 # 更新 feeds
 ./scripts/feeds update -a
@@ -229,7 +227,7 @@ cat > files/usr/bin/update_github_hosts.sh <<'EOF'
 #!/bin/bash
 HOSTS_FILE="/etc/adguardhome/github_hosts.txt"
 TMP_FILE="/tmp/github_hosts.tmp"
-SOURCE_URL="https://mirror.ghproxy.com/https://raw.githubusercontent.com/521xueweihan/GitHub520/main/hosts"
+SOURCE_URL="https://raw.githubusercontent.com/521xueweihan/GitHub520/main/hosts"
 
 if curl -m 15 -sL "${SOURCE_URL}" -o "${TMP_FILE}"; then
     grep -E 'github|raw.githubusercontent|github.io|githubpages' ${TMP_FILE} | sed '/^#/d;/^$/d' > ${TMP_FILE}.filter
