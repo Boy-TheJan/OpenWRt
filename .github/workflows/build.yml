@@ -5,6 +5,7 @@ on:
 env:
   OWRT_DIR: openwrt
   OWRT_BRANCH: main
+  SWAP_FILE: ./swapfile
 
 jobs:
   compile:
@@ -13,15 +14,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies & Create swap
+      - name: Install dependencies
         run: |
           sudo apt update
           sudo apt install -y build-essential libncurses-dev gawk flex bison quilt libssl-dev unzip git wget python3 python3-setuptools file rsync
-          # 替换fallocate，使用dd创建swap，兼容所有Github Actions虚拟机
-          sudo dd if=/dev/zero of=/swapfile bs=1G count=8 status=none
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
+
+      - name: Create swap file in workspace（工作目录，不再使用/swapfile）
+        run: |
+          dd if=/dev/zero of=${{ env.SWAP_FILE }} bs=1G count=8 status=none
+          sudo chmod 600 ${{ env.SWAP_FILE }}
+          sudo mkswap ${{ env.SWAP_FILE }}
+          sudo swapon ${{ env.SWAP_FILE }}
 
       - name: Clone OpenWrt Official Source
         run: |
