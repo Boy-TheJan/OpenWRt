@@ -1,8 +1,6 @@
 name: Build OpenWrt J4125
 on:
   workflow_dispatch:
-  push:
-    branches: main
 
 env:
   OWRT_DIR: openwrt
@@ -26,7 +24,7 @@ jobs:
           cd ${{ env.OWRT_DIR }}
           git checkout ${{ env.OWRT_BRANCH }}
 
-      - name: Prepare custom files（预置LuCI默认简体中文）
+      - name: Prepare custom files（LuCI 默认简体中文）
         run: |
           mkdir -p ${{ env.OWRT_DIR }}/files/etc/config
           cat > ${{ env.OWRT_DIR }}/files/etc/config/luci <<'EOF'
@@ -48,7 +46,7 @@ EOF
           ./scripts/feeds install -a
           make defconfig
 
-      - name: Download source
+      - name: Download source code
         run: |
           cd ${{ env.OWRT_DIR }}
           make download -j$(nproc)
@@ -58,7 +56,7 @@ EOF
           cd ${{ env.OWRT_DIR }}
           make -j$(nproc)
 
-      - name: Upload Artifact
+      - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
         with:
           name: OpenWrt-J4125-x86_64
