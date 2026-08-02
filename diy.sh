@@ -1,19 +1,48 @@
 #!/bin/bash
-set -e
+# 关闭严格报错，防止单次网络失败直接终止脚本
+# set -e
 
-# feeds.conf.default 原始链接，不添加代理
+# 重试函数
+retry_curl(){
+  local url=$1
+  local out=$2
+  for i in {1..3}; do
+    echo "curl尝试第${i}次: $url"
+    curl -m 40 -sSL "$url" -o "$out"
+    [ -f "$out" ] && [ -s "$out" ] && return 0
+    sleep 30
+  done
+  echo "!!! curl下载失败: $url"
+}
+
+retry_git(){
+  local repo=$1
+  local dir=$2
+  if [ -d "$dir" ]; then
+    echo "$dir 已存在，跳过克隆"
+    return 0
+  fi
+  for i in {1..3}; do
+    echo "git克隆尝试第${i}次: $repo"
+    git clone "$repo" "$dir" && return 0
+    sleep 30
+  done
+  echo "!!! git克隆失败 $repo"
+}
+
+# feeds.conf.default链接替换
 sed -i 's|https://git.openwrt.org/feed|https://github.com/openwrt|g' feeds.conf.default
 
 # =========第三方插件源=========
 # TurboACC
-curl -m 30 -sSL https://raw.githubusercontent.com/chenmozhijin/turboacc/luci/add_turboacc.sh -o add_turboacc.sh
-bash add_turboacc.sh --no-sfe
+retry_curl "https://raw.githubusercontent.com/chenmozhijin/turboacc/luci/add_turboacc.sh" "add_turboacc.sh"
+if [ -f "add_turboacc.sh" ] && [ -s "add_turboacc.sh" ];then
+  bash add_turboacc.sh --no-sfe
+fi
 rm -f add_turboacc.sh
 
-# AdGuardHome
+# 添加插件源地址
 echo "src-git adguardhome https://github.com/rufengsuixing/luci-app-adguardhome.git" >> feeds.conf.default
-
-# PassWall
 echo "src-git passwall https://github.com/xiaorouji/openwrt-passwall.git;main" >> feeds.conf.default
 echo "src-git passwall_packages https://github.com/xiaorouji/openwrt-passwall-packages.git;main" >> feeds.conf.default
 
@@ -59,7 +88,7 @@ config interface 'lan'
 	option ifname 'eth1 eth2 eth3'
 	option proto 'static'
 	option ipaddr '192.168.1.1'
-	option netmask '255.255.255.0'
+	option netmask '255.255.0.0'
 	option gateway ''
 	option dns '192.168.1.1#3053'
 EOF
