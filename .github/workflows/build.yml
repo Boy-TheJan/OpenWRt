@@ -17,7 +17,6 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y build-essential libncurses-dev gawk flex bison quilt libssl-dev unzip git wget python3 python3-setuptools file rsync
-          # 增加8G交换分区，防止编译OOM
           sudo fallocate -l 8G /swapfile
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
