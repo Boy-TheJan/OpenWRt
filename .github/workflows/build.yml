@@ -22,7 +22,7 @@ jobs:
           sudo mkswap /swapfile
           sudo swapon /swapfile
 
-      - name: Clone OpenWrt source
+      - name: Clone OpenWrt Official Source
         run: |
           git clone https://github.com/openwrt/openwrt.git ${{ env.OWRT_DIR }}
           cd ${{ env.OWRT_DIR }}
@@ -31,12 +31,10 @@ jobs:
       - name: Embed LuCI default Chinese config
         run: |
           mkdir -p ${{ env.OWRT_DIR }}/files/etc/config
-          cat > ${{ env.OWRT_DIR }}/files/etc/config/luci <<'EOT'
-config core 'main'
-        option lang 'zh-cn'
-        option mediaurlbase '/luci-static/bootstrap/'
-        option theme 'bootstrap'
-EOT
+          echo -e "config core 'main'" > ${{ env.OWRT_DIR }}/files/etc/config/luci
+          echo -e "        option lang 'zh-cn'" >> ${{ env.OWRT_DIR }}/files/etc/config/luci
+          echo -e "        option mediaurlbase '/luci-static/bootstrap/'" >> ${{ env.OWRT_DIR }}/files/etc/config/luci
+          echo -e "        option theme 'bootstrap'" >> ${{ env.OWRT_DIR }}/files/etc/config/luci
 
       - name: Load feeds and build config
         run: |
