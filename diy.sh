@@ -1,27 +1,29 @@
 #!/bin/bash
 set -e
+# GH代理加速地址
+GH_PROXY="https://mirror.ghproxy.com/"
 
-# feeds github加速替换
-sed -i 's|https://git.openwrt.org/feed|https://github.com/openwrt|g' feeds.conf.default
+# feeds链接全局替换，增加代理
+sed -i "s|https://git.openwrt.org/feed|${GH_PROXY}https://github.com/openwrt|g" feeds.conf.default
 
-# =========第三方插件源追加=========
-# TurboACC (--no-sfe 适配main/firewall4)
-curl -sSL https://raw.githubusercontent.com/chenmozhijin/turboacc/luci/add_turboacc.sh -o add_turboacc.sh
+# =========第三方插件源=========
+# TurboACC
+curl -m 30 -sSL ${GH_PROXY}https://raw.githubusercontent.com/chenmozhijin/turboacc/luci/add_turboacc.sh -o add_turboacc.sh
 bash add_turboacc.sh --no-sfe
 rm -f add_turboacc.sh
 
-# AdGuardHome源
-echo "src-git adguardhome https://github.com/rufengsuixing/luci-app-adguardhome.git" >> feeds.conf.default
+# AdGuardHome
+echo "src-git adguardhome ${GH_PROXY}https://github.com/rufengsuixing/luci-app-adguardhome.git" >> feeds.conf.default
 
-# PassWall 官方源
-echo "src-git passwall https://github.com/xiaorouji/openwrt-passwall.git;main" >> feeds.conf.default
-echo "src-git passwall_packages https://github.com/xiaorouji/openwrt-passwall-packages.git;main" >> feeds.conf.default
+# PassWall
+echo "src-git passwall ${GH_PROXY}https://github.com/xiaorouji/openwrt-passwall.git;main" >> feeds.conf.default
+echo "src-git passwall_packages ${GH_PROXY}https://github.com/xiaorouji/openwrt-passwall-packages.git;main" >> feeds.conf.default
 
-# 更新&安装 feeds
+# 更新 feeds
 ./scripts/feeds update -a
 ./scripts/feeds install -a
 
-# LuCI 默认简体中文
+# LuCI简体中文
 sed -i 's/option lang auto/option lang zh_cn/' feeds/luci/modules/luci-base/root/etc/config/luci
 
 # 创建预置文件目录
@@ -31,11 +33,10 @@ mkdir -p files/etc/adguardhome
 mkdir -p files/usr/bin
 mkdir -p files/etc/crontabs
 
-# ====================== 预置ROOT账号密码 ======================
-# root 密码：Admin@123456
+# ====================== ROOT账号密码 root / Admin@123456 ======================
 echo "root:\$1\$VrW0lK1C\$t2xQn5nR5tFwO/hFv2oXn0" > files/etc/shadow
 
-# ========== 1. 预置网络 eth0=WAN PPPoE；eth1 eth2 eth3桥接LAN 192.168.1.1 ==========
+# ========== 网络配置 eth0=WAN PPPoE / eth1 eth2 eth3 LAN桥 192.168.1.1 ==========
 cat > files/etc/config/network <<EOF
 config interface 'loopback'
 	option proto 'static'
@@ -65,7 +66,7 @@ config interface 'lan'
 	option dns '192.168.1.1#3053'
 EOF
 
-# ========== 2. 防火墙基础规则 ==========
+# ========== 防火墙配置（含WOL外网唤醒UDP9放行） ==========
 cat > files/etc/config/firewall <<EOF
 config defaults
 	option syn_flood '1'
@@ -146,7 +147,6 @@ config rule
 	option family 'ipv6'
 	option target 'ACCEPT'
 
-# WOL外网唤醒放行 UDP 9端口
 config rule
 	option name 'WOL-WAN'
 	option src 'wan'
@@ -155,7 +155,7 @@ config rule
 	option target 'ACCEPT'
 EOF
 
-# ========== 3. 时区 Asia/Shanghai ==========
+# ========== 时区 Shanghai ==========
 echo "Asia/Shanghai" > files/etc/timezone
 cat > files/etc/config/system <<EOF
 config system
@@ -164,7 +164,7 @@ config system
 	option zonename 'Asia/Shanghai'
 EOF
 
-# ========== 4. dnsmasq 仅保留DHCP，关闭DNS解析端口 ==========
+# ========== dnsmasq仅DHCP，关闭53端口，DNS交给AdGuardHome ==========
 cat > files/etc/config/dhcp <<EOF
 config dnsmasq
 	option domainneeded '1'
@@ -203,7 +203,7 @@ config odhcpd 'odhcpd'
 	option loglevel '4'
 EOF
 
-# ========== 5. 初始兜底 GitHub Hosts（定时任务会自动覆盖） ==========
+# ========== 初始兜底 GitHub Hosts ==========
 cat > files/etc/adguardhome/github_hosts.txt <<EOF
 # GitHub Hosts Initial Backup
 140.82.112.4 github.com
@@ -215,26 +215,23 @@ cat > files/etc/adguardhome/github_hosts.txt <<EOF
 199.232.68.133 raw.githubusercontent.com
 EOF
 
-# ========== 6. AdGuardHome广告订阅源预置 ==========
+# ========== AdGuard广告订阅源 ==========
 cat > files/etc/adguardhome/adblock_subs.txt <<EOF
-# 广告域名黑名单
+# AdBlock Filter List
 https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt
 https://cdn.jsdelivr.net/gh/privacy-protection-tools/anti-AD/anti-ad-domain.txt
 https://cdn.jsdelivr.net/gh/Loyalsoldier/surge-rules@release/direct.txt
-# 恶意域名拦截
-https://malware-filter.gitlab.io/malware-filter/phishing-filter.txt
+https://malware-filter.gitlab.io/malware-filter/phishing-filter-domain.txt
 EOF
 
-# ========== 7. 自动更新GitHub Hosts 定时脚本 ==========
+# ========== 定时自动更新Github Hosts脚本 ==========
 cat > files/usr/bin/update_github_hosts.sh <<'EOF'
 #!/bin/bash
 HOSTS_FILE="/etc/adguardhome/github_hosts.txt"
 TMP_FILE="/tmp/github_hosts.tmp"
-SOURCE_URL="https://raw.githubusercontent.com/521xueweihan/GitHub520/main/hosts"
+SOURCE_URL="https://mirror.ghproxy.com/https://raw.githubusercontent.com/521xueweihan/GitHub520/main/hosts"
 
-# 15秒超时下载
 if curl -m 15 -sL "${SOURCE_URL}" -o "${TMP_FILE}"; then
-    # 筛选github相关域名，清理注释空行
     grep -E 'github|raw.githubusercontent|github.io|githubpages' ${TMP_FILE} | sed '/^#/d;/^$/d' > ${TMP_FILE}.filter
     if [ -s "${TMP_FILE}.filter" ]; then
         echo "# Auto update GitHub Hosts $(date "+%Y-%m-%d %H:%M:%S")" > ${HOSTS_FILE}
@@ -242,34 +239,27 @@ if curl -m 15 -sL "${SOURCE_URL}" -o "${TMP_FILE}"; then
         /etc/init.d/adguardhome reload
         logger "GitHub Hosts 更新成功，已重载AdGuardHome"
     else
-        logger "GitHub Hosts 过滤后无有效记录，放弃更新"
+        logger "GitHub Hosts过滤无有效内容，放弃更新"
     fi
 else
-    logger "GitHub Hosts 网络下载失败，保留原有hosts文件"
+    logger "GitHub Hosts下载失败，保留旧文件"
 fi
 rm -f ${TMP_FILE} ${TMP_FILE}.filter
 EOF
 chmod +x files/usr/bin/update_github_hosts.sh
 
-# ========== 8. Crontab定时任务：每日03:10执行更新 ==========
+# ========== Cron定时：每日03:10更新 ==========
 cat > files/etc/crontabs/root <<EOF
-# 每日 03:10 自动更新GitHub Hosts
+# 每日03:10 更新GitHub Hosts
 10 3 * * * /usr/bin/update_github_hosts.sh
 EOF
 
-# 启用系统cron服务开机自启
+# 启用定时任务
 cat > files/etc/config/cron <<EOF
 config cron
 	option enabled '1'
 EOF
 
-echo "============================================="
-echo "DIY脚本执行完成！"
-echo "功能清单："
-echo "  PassWall + TurboACC + WireGuard + SQM CAKE"
-echo "  AdGuardHome广告过滤，dnsmasq仅DHCP"
-echo "  定时每日更新GitHub Hosts，自动重载AGH"
-echo "  DDNS、WOL网络唤醒、预设root账号密码"
-echo "  时区Asia/Shanghai，四口网卡网络预设"
-echo "⚠️重要：启用PassWall务必关闭TurboACC【软件流量分载】避免防火墙冲突"
-echo "============================================="
+echo "==================== DIY脚本执行完成 ===================="
+echo "集成清单：PassWall/TurboACC/WireGuard/SQM/AdGuardHome/DDNS/WOL"
+echo "⚠️启用PassWall时，关闭TurboACC【软件流量分载】防止冲突"
