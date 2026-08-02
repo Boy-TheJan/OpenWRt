@@ -1,0 +1,63 @@
+name: Build OpenWrt J4125
+on:
+  workflow_dispatch:
+
+env:
+  OWRT_DIR: openwrt
+  OWRT_BRANCH: main
+
+jobs:
+  compile:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential libncurses-dev gawk flex bison quilt libssl-dev unzip git wget python3 python3-setuptools file rsync
+
+      - name: Clone OpenWrt Source
+        run: |
+          git clone https://github.com/openwrt/openwrt.git ${{ env.OWRT_DIR }}
+          cd ${{ env.OWRT_DIR }}
+          git checkout ${{ env.OWRT_BRANCH }}
+
+      - name: Prepare custom files（LuCI 默认简体中文）
+        run: |
+          mkdir -p ${{ env.OWRT_DIR }}/files/etc/config
+          cat > ${{ env.OWRT_DIR }}/files/etc/config/luci <<'EOF'
+config core 'main'
+        option lang 'zh-cn'
+        option mediaurlbase '/luci-static/bootstrap/'
+        option theme 'bootstrap'
+EOF
+
+      - name: Import feeds & config
+        run: |
+          cp feeds.conf.default ${{ env.OWRT_DIR }}/
+          cp .config ${{ env.OWRT_DIR }}/
+          cd ${{ env.OWRT_DIR }}
+          sed -i 's/dnsmasq \\/dnsmasq-full \\/' include/target.mk
+          rm -rf feeds package/feeds
+          ./scripts/feeds clean
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          make defconfig
+
+      - name: Download source code
+        run: |
+          cd ${{ env.OWRT_DIR }}
+          make download -j$(nproc)
+
+      - name: Compile firmware
+        run: |
+          cd ${{ env.OWRT_DIR }}
+          make -j$(nproc)
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenWrt-J4125-x86_64
+          path: ${{ env.OWRT_DIR }}/bin/targets/x86/64/
