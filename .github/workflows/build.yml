@@ -13,7 +13,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies & Add swap
+      - name: Install dependencies & Create swap
         run: |
           sudo apt update
           sudo apt install -y build-essential libncurses-dev gawk flex bison quilt libssl-dev unzip git wget python3 python3-setuptools file rsync
@@ -22,23 +22,23 @@ jobs:
           sudo mkswap /swapfile
           sudo swapon /swapfile
 
-      - name: Clone OpenWrt Source Code
+      - name: Clone OpenWrt source
         run: |
           git clone https://github.com/openwrt/openwrt.git ${{ env.OWRT_DIR }}
           cd ${{ env.OWRT_DIR }}
           git checkout ${{ env.OWRT_BRANCH }}
 
-      - name: Prepare Custom Files（LuCI 默认简体中文）
+      - name: Embed LuCI default Chinese config
         run: |
           mkdir -p ${{ env.OWRT_DIR }}/files/etc/config
-          cat > ${{ env.OWRT_DIR }}/files/etc/config/luci <<'EOF'
+          cat > ${{ env.OWRT_DIR }}/files/etc/config/luci <<'EOT'
 config core 'main'
         option lang 'zh-cn'
         option mediaurlbase '/luci-static/bootstrap/'
         option theme 'bootstrap'
-EOF
+EOT
 
-      - name: Import feeds & .config
+      - name: Load feeds and build config
         run: |
           cp feeds.conf.default ${{ env.OWRT_DIR }}/
           cp .config ${{ env.OWRT_DIR }}/
@@ -50,17 +50,17 @@ EOF
           ./scripts/feeds install -a
           make defconfig
 
-      - name: Download source packages
+      - name: Fetch source archives
         run: |
           cd ${{ env.OWRT_DIR }}
           make download -j$(nproc)
 
-      - name: Compile firmware
+      - name: Compile firmware image
         run: |
           cd ${{ env.OWRT_DIR }}
           make -j$(nproc)
 
-      - name: Upload firmware
+      - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
         with:
           name: OpenWrt-J4125-x86_64
