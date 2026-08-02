@@ -1,0 +1,55 @@
+name: Build OpenWrt
+
+on:
+  workflow_dispatch:
+  # push:
+  #   branches: [ main ]
+
+env:
+  TZ: Asia/Shanghai
+  OPENWRT_BRANCH: main
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@main
+
+      - name: 安装编译依赖
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential libncurses-dev gawk flex bison qemu-utils git wget curl unzip libssl-dev rsync python3-pip
+
+      - name: 拉取 OpenWrt 源码
+        run: |
+          git clone https://github.com/openwrt/openwrt.git openwrt
+          cd openwrt
+          git checkout ${{ env.OPENWRT_BRANCH }}
+
+      - name: 复制配置文件到源码目录
+        run: |
+          cp -f .config openwrt/
+          cp -f diy.sh openwrt/
+          chmod +x openwrt/diy.sh
+
+      - name: 执行DIY脚本(拉取插件+预制files配置)
+        run: |
+          cd openwrt
+          ./diy.sh
+
+      - name: 预下载源码包
+        run: |
+          cd openwrt
+          make download -j$(nproc)
+
+      - name: 编译固件
+        run: |
+          cd openwrt
+          make -j$(nproc)
+
+      - name: 上传固件制品
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenWrt-x86_64-Firmware
+          path: openwrt/bin/targets/x86/64/*.img
