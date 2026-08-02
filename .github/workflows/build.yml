@@ -17,7 +17,8 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y build-essential libncurses-dev gawk flex bison quilt libssl-dev unzip git wget python3 python3-setuptools file rsync
-          sudo fallocate -l 8G /swapfile
+          # 替换fallocate，使用dd创建swap，兼容所有Github Actions虚拟机
+          sudo dd if=/dev/zero of=/swapfile bs=1G count=8 status=none
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
