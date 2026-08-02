@@ -1,9 +1,6 @@
-name: Build OpenWrt
-
+name: Build OpenWrt Main x86_64
 on:
   workflow_dispatch:
-  # push:
-  #   branches: [ main ]
 
 env:
   TZ: Asia/Shanghai
@@ -13,43 +10,51 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - name: 检出源码
-        uses: actions/checkout@main
+      - name: 检出仓库配置文件
+        uses: actions/checkout@v4
 
       - name: 安装编译依赖
         run: |
+          set -x
           sudo apt update
-          sudo apt install -y build-essential libncurses-dev gawk flex bison qemu-utils git wget curl unzip libssl-dev rsync python3-pip
+          sudo apt install -y build-essential libncurses-dev gawk flex bison qemu-utils git wget curl unzip libssl-dev rsync python3-pip ca-certificates
 
-      - name: 拉取 OpenWrt 源码
+      - name: 拉取OpenWrt源码（GHProxy加速）
         run: |
-          git clone https://github.com/openwrt/openwrt.git openwrt
+          set -x
+          git clone https://mirror.ghproxy.com/https://github.com/openwrt/openwrt.git openwrt
           cd openwrt
           git checkout ${{ env.OPENWRT_BRANCH }}
 
-      - name: 复制配置文件到源码目录
+      - name: 复制配置与脚本
         run: |
+          set -x
           cp -f .config openwrt/
           cp -f diy.sh openwrt/
           chmod +x openwrt/diy.sh
+          # 统一转换换行LF，修复Windows编辑带来\r\n问题
+          sed -i 's/\r$//' openwrt/diy.sh
 
-      - name: 执行DIY脚本(拉取插件+预制files配置)
+      - name: 执行DIY初始化脚本
         run: |
+          set -x
           cd openwrt
           ./diy.sh
 
-      - name: 预下载源码包
+      - name: 预下载软件包
         run: |
+          set -x
           cd openwrt
           make download -j$(nproc)
 
       - name: 编译固件
         run: |
+          set -x
           cd openwrt
           make -j$(nproc)
 
-      - name: 上传固件制品
+      - name: 上传固件成品
         uses: actions/upload-artifact@v4
         with:
-          name: OpenWrt-x86_64-Firmware
+          name: OpenWrt-x86_64-ext4
           path: openwrt/bin/targets/x86/64/*.img
