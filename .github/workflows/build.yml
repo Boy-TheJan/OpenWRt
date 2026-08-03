@@ -11,16 +11,6 @@ jobs:
   compile:
     runs-on: ubuntu-24.04
     steps:
-      # 磁盘扩容，解决编译空间不足
-      - name: Maximize build disk space
-        uses: easimon/maximize-build-space@master
-        with:
-          root-reserve-mb: 1024
-          swap-size-mb: 0
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -29,6 +19,7 @@ jobs:
           sudo apt update
           sudo apt install -y build-essential libncurses-dev gawk flex bison quilt libssl-dev unzip git wget python3 python3-setuptools file rsync
 
+      # 创建8G交换分区
       - name: Create 8G swap
         run: |
           dd if=/dev/zero of=${{ env.SWAP_FILE }} bs=1G count=8 status=none
@@ -42,7 +33,7 @@ jobs:
           cd ${{ env.OWRT_DIR }}
           git checkout ${{ env.OWRT_BRANCH }}
 
-      # Argon主题本地克隆，不和feeds冲突
+      # Argon主题本地克隆
       - name: Pull Argon Theme & Argon Config
         run: |
           git clone https://github.com/jerrykuku/luci-theme-argon.git ${{ env.OWRT_DIR }}/package/luci-theme-argon
@@ -59,23 +50,19 @@ jobs:
             echo "        option theme 'argon'"
           } > ${{ env.OWRT_DIR }}/files/etc/config/luci
 
-      # 【核心修复】加载自定义feeds、禁止 feeds install -a 消除gst警告
+      # 加载自定义feeds，精准安装消除gst警告
       - name: Load feeds and build config
         run: |
-          # 拷贝自定义配置文件
           cp ./feeds.conf ${{ env.OWRT_DIR }}/feeds.conf
-          cp ./config ${{ env.OWRT_DIR }}/.config
+          cp ./.config ${{ env.OWRT_DIR }}/.config
           cd ${{ env.OWRT_DIR }}
 
-          # 替换dnsmasq为dnsmasq-full
           sed -i 's/dnsmasq \\/dnsmasq-full \\/' include/target.mk
 
-          # 清理旧feeds残留
           rm -rf feeds package/feeds
           ./scripts/feeds clean
 
           ./scripts/feeds update -a
-          # 精准安装指定feed，不再install -a，消除大量gst无关警告
           ./scripts/feeds install packages luci routing telephony passwall_packages passwall_luci
 
           make defconfig
@@ -85,7 +72,7 @@ jobs:
           cd ${{ env.OWRT_DIR }}
           make download -j1
 
-      # 【核心修复】开启V=sc详细日志，崩溃直接看到原因
+      # 带详细日志编译，方便排查target/linux错误
       - name: Compile firmware image
         run: |
           cd ${{ env.OWRT_DIR }}
