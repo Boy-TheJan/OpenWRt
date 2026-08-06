@@ -20,24 +20,20 @@ jobs:
       - name: Install compile dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential gcc g++ binutils flex bison gawk autoconf automake libtool ccache libncurses-dev git curl wget unzip rsync python3-pip python3-setuptools libssl-dev
+          sudo apt-get install -y build-essential gcc g++ binutils flex bison gawk autoconf automake libtool ccache libncurses-dev git curl wget unzip rsync python3-pip python3-setuptools libssl-dev qemu-utils
 
       - name: Git clone OpenWrt main branch from GitHub official
         run: |
           git clone --depth 1 --branch ${{ env.OPENWRT_BRANCH }} https://github.com/openwrt/openwrt.git openwrt
           cd openwrt
-
-          cat > feeds.conf.default <<'EOF'
-src-git base https://github.com/openwrt/feeds.git;main
-src-git packages https://github.com/openwrt/packages.git;main
-src-git luci https://github.com/openwrt/luci.git;main
-src-git routing https://github.com/openwrt/routing.git;main
-src-git telephony https://github.com/openwrt/telephony.git;main
-src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git;main
-src-git passwall_luci https://github.com/Openwrt-Passwall/openwrt-passwall.git;main
-src-git argon https://github.com/jerrykuku/luci-theme-argon
-EOF
-
+          echo "src-git base https://github.com/openwrt/feeds.git;main" > feeds.conf.default
+          echo "src-git packages https://github.com/openwrt/packages.git;main" >> feeds.conf.default
+          echo "src-git luci https://github.com/openwrt/luci.git;main" >> feeds.conf.default
+          echo "src-git routing https://github.com/openwrt/routing.git;main" >> feeds.conf.default
+          echo "src-git telephony https://github.com/openwrt/telephony.git;main" >> feeds.conf.default
+          echo "src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git;main" >> feeds.conf.default
+          echo "src-git passwall_luci https://github.com/Openwrt-Passwall/openwrt-passwall.git;main" >> feeds.conf.default
+          echo "src-git argon https://github.com/jerrykuku/luci-theme-argon" >> feeds.conf.default
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
@@ -45,12 +41,12 @@ EOF
         run: |
           cd openwrt
           make defconfig
-
           echo 'CONFIG_TARGET_x86=y' >> .config
           echo 'CONFIG_TARGET_x86_64=y' >> .config
           echo 'CONFIG_TARGET_x86_64_Generic=y' >> .config
           echo 'CONFIG_TARGET_IMAGES_GZIP=y' >> .config
           echo 'CONFIG_TARGET_IMAGES_COMBINED_EFI=y' >> .config
+          echo 'CONFIG_TARGET_IMAGES_COMBINED_VMDK=y' >> .config
 
           echo 'CONFIG_PACKAGE_kmod-net-igc=y' >> .config
           echo 'CONFIG_PACKAGE_kmod-igc=y' >> .config
@@ -102,4 +98,6 @@ EOF
         uses: actions/upload-artifact@v4
         with:
           name: OpenWrt-${{ env.FIRMWARE_TAG }}
-          path: openwrt/bin/targets/x86/64/openwrt-*-x86-64-generic-combined-img-efi.gz
+          path: |
+            openwrt/bin/targets/x86/64/openwrt-*-x86-64-generic-combined-img-efi.gz
+            openwrt/bin/targets/x86/64/openwrt-*-x86-64-generic-combined-img-vmdk.gz
