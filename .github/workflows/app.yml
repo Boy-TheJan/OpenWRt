@@ -1,0 +1,114 @@
+name: Build OpenWrt MAIN J4125 I225Vx4
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+env:
+  OPENWRT_BRANCH: main
+  FIRMWARE_TAG: MAIN-J4125-I225Vx4-16G
+  CI_DEBUG: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout workflow files
+        uses: actions/checkout@v4
+
+      - name: Install compile dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential gcc g++ binutils flex bison gawk autoconf automake libtool ccache libncurses-dev git curl wget unzip rsync python3-pip python3-setuptools libssl-dev
+
+      - name: Git clone OpenWrt main branch from GitHub official
+        run: |
+          git clone --depth 1 --branch ${{ env.OPENWRT_BRANCH }} https://github.com/openwrt/openwrt.git openwrt
+          cd openwrt
+
+          # feeds.conf.default 全部同步main分支
+          cat > feeds.conf.default <<EOF
+src-git base https://github.com/openwrt/feeds.git;main
+src-git packages https://github.com/openwrt/packages.git;main
+src-git luci https://github.com/openwrt/luci.git;main
+src-git routing https://github.com/openwrt/routing.git;main
+src-git telephony https://github.com/openwrt/telephony.git;main
+src-git passwall https://github.com/xiaorouji/openwrt-passwall
+src-git argon https://github.com/jerrykuku/luci-theme-argon
+EOF
+
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Generate .config for J4125 x86_64 main
+        run: |
+          cd openwrt
+          make defconfig
+
+          # x86_64 UEFI 目标，J4125必须combined‑img‑efi
+          echo 'CONFIG_TARGET_x86=y' >> .config
+          echo 'CONFIG_TARGET_x86_64=y' >> .config
+          echo 'CONFIG_TARGET_x86_64_Generic=y' >> .config
+          echo 'CONFIG_TARGET_IMAGES_GZIP=y' >> .config
+          echo 'CONFIG_TARGET_IMAGES_COMBINED_EFI=y' >> .config
+
+          # I225‑V rev03 igc驱动(main分支驱动最新)
+          echo 'CONFIG_PACKAGE_kmod-net-igc=y' >> .config
+          echo 'CONFIG_PACKAGE_kmod-igc=y' >> .config
+
+          # GeminiLake J4125硬件：USB XHCI / UHD600 i915核显 / HDA声卡 / I2C
+          echo 'CONFIG_PACKAGE_kmod-usb-core=y' >> .config
+          echo 'CONFIG_PACKAGE_kmod-usb-xhci=y' >> .config
+          echo 'CONFIG_PACKAGE_kmod-sound-hda-intel=y' >> .config
+          echo 'CONFIG_PACKAGE_kmod-i915=y' >> .config
+          echo 'CONFIG_PACKAGE_kmod-i2c-i801=y' >> .config
+
+          # 完整IPv6支持
+          echo 'CONFIG_PACKAGE_ipv6helper=y' >> .config
+          echo 'CONFIG_PACKAGE_odhcpd-ipv6=y' >> .config
+          echo 'CONFIG_PACKAGE_6in4=y' >> .config
+          echo 'CONFIG_PACKAGE_6rd=y' >> .config
+          echo 'CONFIG_PACKAGE_luci-proto-dhcpv6=y' >> .config
+          echo 'CONFIG_PACKAGE_dnsmasq-full=y' >> .config
+          echo 'CONFIG_DNSMASQ_IPV6=y' >> .config
+
+          # nftables 流量卸载，main分支nft‑flowoffload性能更好
+          echo 'CONFIG_PACKAGE_kmod-flow-offload=y' >> .config
+          echo 'CONFIG_FLOW_OFFLOAD=y' >> .config
+          echo 'CONFIG_PACKAGE_kmod-nft-flowoffload=y' >> .config
+
+          # 16G大内存，关闭小内存裁剪
+          echo '# CONFIG_TARGET_INIT_SMALL_RAM is not set' >> .config
+          echo 'CONFIG_PACKAGE_kswapd=y' >> .config
+
+          # LuCI、Argon主题、中文
+          echo 'CONFIG_PACKAGE_luci=y' >> .config
+          echo 'CONFIG_PACKAGE_luci-theme-argon=y' >> .config
+          echo 'CONFIG_PACKAGE_luci-i18n-zh-cn=y' >> .config
+
+          # PassWall全套
+          echo 'CONFIG_PACKAGE_luci-app-passwall=y' >> .config
+          echo 'CONFIG_PACKAGE_passwall-core=y' >> .config
+          echo 'CONFIG_PACKAGE_passwall-luci=y' >> .config
+
+          # 常用工具
+          echo 'CONFIG_PACKAGE_iperf3=y' >> .config
+          echo 'CONFIG_PACKAGE_tcpdump=y' >> .config
+          echo 'CONFIG_PACKAGE_curl=y' >> .config
+          echo 'CONFIG_PACKAGE_wget-ssl=y' >> .config
+          echo 'CONFIG_PACKAGE_nload=y' >> .config
+          echo 'CONFIG_PACKAGE_htop=y' >> .config
+
+          make oldconfig
+
+      - name: Build firmware V=s verbose log
+        run: |
+          cd openwrt
+          make -j$(nproc) V=s
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenWrt‑${{ env.FIRMWARE_TAG }}
+          path: openwrt/bin/targets/x86/64/openwrt-*-x86-64-generic-combined-img-efi.gz
