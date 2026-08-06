@@ -67,7 +67,6 @@ jobs:
           echo 'CONFIG_ZSWAP_COMPRESSOR_DEFAULT_LZ4=y' >> target/linux/x86/config-6.6
           echo 'CONFIG_ZRAM=y' >> target/linux/x86/config-6.6
 
-          # Append extra kernel optimize
           echo 'CONFIG_TCP_DEFAULT_WINDOW_SCALE=7' >> target/linux/x86/config-6.6
           echo 'CONFIG_NET_SOCK_MSG=y' >> target/linux/x86/config-6.6
           echo 'CONFIG_NET_FOU=y' >> target/linux/x86/config-6.6
@@ -77,7 +76,7 @@ jobs:
 
           # -------------------------- sysctl 99-performance.conf --------------------------
           mkdir -p package/base-files/files/etc/sysctl.d
-          cat > package/base-files/files/etc/sysctl.d/99-performance.conf <<'EOF'
+          cat > package/base-files/files/etc/sysctl.d/99-performance.conf <<'SYSCTL_EOF'
 net.ipv4.tcp_keepalive_time = 600
 net.ipv4.tcp_keepalive_intvl = 30
 net.ipv4.tcp_keepalive_probes = 3
@@ -100,7 +99,6 @@ net.core.rmem_max = 16777216
 net.core.wmem_max = 16777216
 net.core.rmem_default = 262144
 net.core.wmem_default = 262144
-
 net.ipv4.tcp_moderate_rcvbuf = 1
 net.ipv4.ip_local_port_range = 1024 65535
 net.ipv4.tcp_sack = 1
@@ -113,7 +111,6 @@ net.netfilter.nf_flow_table_gc_interval = 1000
 vm.pagecache_limit_mb = 1024
 vm.vfs_cache_pressure = 50
 net.ipv4.udp_mem = 8388608 12582912 16777216
-
 net.ipv4.tcp_fastopen = 3
 net.core.somaxconn = 4096
 net.core.netdev_max_backlog = 16384
@@ -126,22 +123,22 @@ net.ipv4.conf.all.rp_filter = 1
 net.ipv4.conf.default.rp_filter = 1
 net.ipv4.icmp_echo_ignore_broadcasts = 1
 net.ipv4.icmp_ignore_bogus_error_responses = 1
-EOF
+SYSCTL_EOF
 
-          # -------------------------- IRQ balance init script --------------------------
+          # -------------------------- irqbalance_tune init script --------------------------
           mkdir -p package/base-files/files/etc/init.d
-          cat > package/base-files/files/etc/init.d/irqbalance_tune <<'EOF'
+          cat > package/base-files/files/etc/init.d/irqbalance_tune <<'IRQ_EOF'
 #!/bin/sh /etc/rc.common
 START=15
 start() {
     irqbalance --oneshot
 }
-EOF
+IRQ_EOF
           chmod +x package/base-files/files/etc/init.d/irqbalance_tune
           echo "/etc/init.d/irqbalance_tune enable" >> package/base-files/files/etc/rc.local
 
-          # -------------------------- Disk IO & SSD fstrim tune init script --------------------------
-          cat > package/base-files/files/etc/init.d/disk_tune <<'EOF'
+          # -------------------------- disk_tune init script --------------------------
+          cat > package/base-files/files/etc/init.d/disk_tune <<'DISK_EOF'
 #!/bin/sh /etc/rc.common
 START=16
 start() {
@@ -156,16 +153,16 @@ start() {
     uci set system.@system[0].cronfstrim_interval='weekly'
     uci commit system
 }
-EOF
+DISK_EOF
           chmod +x package/base-files/files/etc/init.d/disk_tune
           echo "/etc/init.d/disk_tune enable" >> package/base-files/files/etc/rc.local
 
-          # -------------------------- System rc.local disable unused service --------------------------
+          # disable unused service in rc.local
           echo "/etc/init.d/umountd disable" >> package/base-files/files/etc/rc.local
           echo "/etc/init.d/sysntpd disable" >> package/base-files/files/etc/rc.local
           echo "/etc/init.d/dropbear disable; /etc/init.d/dropbear enable" >> package/base-files/files/etc/rc.local
 
-          # -------------------------- Base network config: LAN IP / Timezone / Hostname --------------------------
+          # lan ip、timezone、hostname
           sed -i 's/192.168.1.1/192.168.5.1/g' package/base-files/files/bin/config_generate
           sed -i '/set system.@system\[0\].timezone/d' package/base-files/files/bin/config_generate
           echo 'set system.@system[0].timezone=CST-8' >> package/base-files/files/bin/config_generate
@@ -238,11 +235,9 @@ EOF
           echo 'CONFIG_PACKAGE_luci-i18n-zh-cn=y' >> .config
           echo 'CONFIG_PACKAGE_luci-app-passwall=y' >> .config
 
-          # AdGuardHome ad block & dns accelerate
           echo 'CONFIG_PACKAGE_luci-app-adguardhome=y' >> .config
           echo 'CONFIG_PACKAGE_adguardhome=y' >> .config
 
-          # SQM QoS anti‑bufferbloat
           echo 'CONFIG_PACKAGE_sqm-scripts=y' >> .config
           echo 'CONFIG_PACKAGE_luci-app-sqm=y' >> .config
 
