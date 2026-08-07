@@ -1,266 +1,417 @@
-name: Build OpenWrt MAIN J4125
+name: Build OpenWrt J4125 Multi-Format
+
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
+    inputs:
+      build_type:
+        description: '选择编译类型'
+        required: true
+        default: 'full'
+        type: choice
+        options:
+          - full
+          - minimal
+          - custom
+  schedule:
+    - cron: '0 0 1 * *'
 
 env:
-  OPENWRT_BRANCH: main
-  FIRMWARE_TAG: J4125-I225V
+  REPO_URL: https://github.com/openwrt/openwrt.git
+  REPO_BRANCH: main
+  TZ: Asia/Shanghai
+
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 360
+    
     steps:
-      - name: Checkout workflow
-        uses: actions/checkout@v4
+    - name: Checkout
+      uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential gcc g++ binutils flex bison gawk autoconf automake libtool ccache libncurses-dev git curl wget unzip rsync python3-pip libssl-dev qemu-utils
+    - name: Setup environment
+      run: |
+        echo "BUILD_DATE=$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_ENV
+        echo "BUILD_DIR=${GITHUB_WORKSPACE}/openwrt" >> $GITHUB_ENV
+        echo "OUTPUT_DIR=${GITHUB_WORKSPACE}/firmware" >> $GITHUB_ENV
+        
+        # 创建输出目录结构
+        mkdir -p ${GITHUB_WORKSPACE}/firmware/{img,vmdk,vdi,vhdx,qcow2,logs}
 
-      - name: Clone OpenWrt source
-        run: |
-          git clone --depth 1 --branch ${{ env.OPENWRT_BRANCH }} https://github.com/openwrt/openwrt.git openwrt
-          cd openwrt
-          cp feeds.conf.default feeds.conf
+    - name: Free disk space
+      uses: jlumbroso/free-disk-space@main
+      with:
+        tool-cache: true
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: true
+        docker-images: true
+        swap-storage: true
 
-      - name: Setup ccache
-        uses: actions/cache@v4
-        with:
-          path: openwrt/.ccache
-          key: ${{ env.FIRMWARE_TAG }}-${{ github.sha }}
-        env:
-          CCACHE_DIR: openwrt/.ccache
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq \
+          build-essential ccache clang flex bison g++ gawk \
+          gcc-multilib g++-multilib gettext git libncurses5-dev \
+          libssl-dev python3-setuptools rsync swig unzip zlib1g-dev \
+          file wget quilt python3-distutils time libelf-dev \
+          qemu-utils cpio rsync bc kmod
+        
+        # 验证 qemu-img 可用
+        qemu-img --version || echo "WARNING: qemu-img not found"
 
-      - name: Source code performance tuning
-        run: |
-          cd openwrt
-          echo "==== Start performance tuning ===="
+    - name: Clone OpenWrt source
+      run: |
+        echo "Cloning OpenWrt source..."
+        git clone --depth 1 ${REPO_URL} -b ${REPO_BRANCH} ${BUILD_DIR}
+        cd ${BUILD_DIR}
+        
+        # 配置 feeds
+        echo "src-git passwall https://github.com/xiaorouji/openwrt-passwall.git" >> feeds.conf.default
+        echo "src-git passwall_packages https://github.com/xiaorouji/openwrt-passwall-packages.git" >> feeds.conf.default
+        echo "src-git helloworld https://github.com/fw876/helloworld.git" >> feeds.conf.default
+        echo "src-git adguardhome https://github.com/rufengsuixing/luci-app-adguardhome.git" >> feeds.conf.default
+        
+        # 更新 feeds（带重试）
+        for i in 1 2 3; do
+          ./scripts/feeds update -a && break
+          echo "Feeds update failed, retrying ($i)..."
+          sleep 10
+        done
+        
+        ./scripts/feeds install -a
 
-          # kernel config x86_64 config‑6.6
-          KCFG=target/linux/x86/config-6.6
-          echo 'CONFIG_TCP_CONG_BBR=y' >> $KCFG
-          echo 'CONFIG_DEFAULT_TCP_CONG="bbr"' >> $KCFG
-          echo 'CONFIG_TCP_FASTOPEN=y' >> $KCFG
-          echo 'CONFIG_VM_SWAPPINESS=10' >> $KCFG
-          echo 'CONFIG_NF_FLOW_TABLE=y' >> $KCFG
-          echo 'CONFIG_NF_FLOW_TABLE_PROCFS=y' >> $KCFG
-          echo 'CONFIG_NET_RX_BUSY_POLL=y' >> $KCFG
-          echo 'CONFIG_BQL=y' >> $KCFG
-          echo '# CONFIG_DEBUG_KERNEL is not set' >> $KCFG
-          echo '# CONFIG_DEBUG_FS is not set' >> $KCFG
-          echo 'CONFIG_MEMCG=y' >> $KCFG
-          echo 'CONFIG_TRANSPARENT_HUGEPAGE=y' >> $KCFG
-          echo 'CONFIG_TRANSPARENT_HUGEPAGE_ALWAYS=y' >> $KCFG
-          echo 'CONFIG_PREEMPT=y' >> $KCFG
-          echo 'CONFIG_PREEMPT_BUILD=y' >> $KCFG
-          echo '# CONFIG_KASAN is not set' >> $KCFG
-          echo '# CONFIG_KGDB is not set' >> $KCFG
-          echo 'CONFIG_NET_GRO=y' >> $KCFG
-          echo 'CONFIG_NET_GSO=y' >> $KCFG
-          echo 'CONFIG_ZSWAP=y' >> $KCFG
-          echo 'CONFIG_ZSWAP_COMPRESSOR_DEFAULT_LZ4=y' >> $KCFG
-          echo 'CONFIG_ZRAM=y' >> $KCFG
-          echo 'CONFIG_TCP_DEFAULT_WINDOW_SCALE=7' >> $KCFG
-          echo 'CONFIG_NET_SOCK_MSG=y' >> $KCFG
-          echo 'CONFIG_NET_FOU=y' >> $KCFG
-          echo '# CONFIG_SOUND_OSS is not set' >> $KCFG
-          echo '# CONFIG_AGP is not set' >> $KCFG
-          echo 'CONFIG_NET_MEMCG=y' >> $KCFG
+    - name: Generate configuration
+      run: |
+        cd ${BUILD_DIR}
+        
+        # 创建配置文件
+        cat > .config << 'EOF'
+# ===== 目标平台 =====
+CONFIG_TARGET_x86=y
+CONFIG_TARGET_x86_64=y
+CONFIG_TARGET_x86_64_DEVICE_generic=y
 
-          # sysctl performance config 99‑performance.conf
-          mkdir -p package/base-files/files/etc/sysctl.d
-          SYSCTL=package/base-files/files/etc/sysctl.d/99-performance.conf
-          > $SYSCTL
-          echo "net.ipv4.tcp_keepalive_time = 600" >> $SYSCTL
-          echo "net.ipv4.tcp_keepalive_intvl = 30" >> $SYSCTL
-          echo "net.ipv4.tcp_keepalive_probes = 3" >> $SYSCTL
-          echo "net.ipv4.tcp_syn_retries = 2" >> $SYSCTL
-          echo "net.ipv4.tcp_synack_retries = 2" >> $SYSCTL
-          echo "net.ipv4.tcp_fin_timeout = 30" >> $SYSCTL
-          echo "net.ipv4.tcp_tw_reuse = 1" >> $SYSCTL
-          echo "net.ipv4.tcp_max_tw_buckets = 20000" >> $SYSCTL
-          echo "net.ipv4.tcp_max_syn_backlog = 8192" >> $SYSCTL
-          echo "net.ipv4.tcp_window_scaling = 1" >> $SYSCTL
-          echo "net.netfilter.nf_conntrack_max = 262144" >> $SYSCTL
-          echo "net.netfilter.nf_conntrack_tcp_timeout_established = 3600" >> $SYSCTL
-          echo "net.netfilter.nf_conntrack_tcp_timeout_time_wait = 30" >> $SYSCTL
-          echo "vm.swappiness = 10" >> $SYSCTL
-          echo "vm.dirty_ratio = 10" >> $SYSCTL
-          echo "vm.dirty_background_ratio = 5" >> $SYSCTL
-          echo "net.core.busy_poll = 50" >> $SYSCTL
-          echo "net.core.busy_read = 50" >> $SYSCTL
-          echo "net.core.rmem_max = 16777216" >> $SYSCTL
-          echo "net.core.wmem_max = 16777216" >> $SYSCTL
-          echo "net.core.rmem_default = 262144" >> $SYSCTL
-          echo "net.core.wmem_default = 262144" >> $SYSCTL
-          echo "net.ipv4.tcp_moderate_rcvbuf = 1" >> $SYSCTL
-          echo "net.ipv4.ip_local_port_range = 1024 65535" >> $SYSCTL
-          echo "net.ipv4.tcp_sack = 1" >> $SYSCTL
-          echo "net.ipv4.tcp_dsack = 1" >> $SYSCTL
-          echo "net.ipv4.conf.all.accept_source_route = 0" >> $SYSCTL
-          echo "net.ipv4.conf.default.accept_source_route = 0" >> $SYSCTL
-          echo "net.ipv4.conf.all.send_redirects = 0" >> $SYSCTL
-          echo "net.ipv4.conf.default.send_redirects = 0" >> $SYSCTL
-          echo "net.netfilter.nf_flow_table_gc_interval = 1000" >> $SYSCTL
-          echo "vm.pagecache_limit_mb = 1024" >> $SYSCTL
-          echo "vm.vfs_cache_pressure = 50" >> $SYSCTL
-          echo "net.ipv4.udp_mem = 8388608 12582912 16777216" >> $SYSCTL
-          echo "net.ipv4.tcp_fastopen = 3" >> $SYSCTL
-          echo "net.core.somaxconn = 4096" >> $SYSCTL
-          echo "net.core.netdev_max_backlog = 16384" >> $SYSCTL
-          echo "net.core.rmem_max = 33554432" >> $SYSCTL
-          echo "net.core.wmem_max = 33554432" >> $SYSCTL
-          echo "net.ipv4.tcp_max_syn_backlog = 16384" >> $SYSCTL
-          echo "vm.dirty_expire_centisecs = 3000" >> $SYSCTL
-          echo "vm.dirty_writeback_centisecs = 500" >> $SYSCTL
-          echo "net.ipv4.conf.all.rp_filter = 1" >> $SYSCTL
-          echo "net.ipv4.conf.default.rp_filter = 1" >> $SYSCTL
-          echo "net.ipv4.icmp_echo_ignore_broadcasts = 1" >> $SYSCTL
-          echo "net.ipv4.icmp_ignore_bogus_error_responses = 1" >> $SYSCTL
+# ===== 构建选项 =====
+CONFIG_BUILD_PATENTED=y
+CONFIG_BUILD_NLS=y
+CONFIG_BUILD_LOG=y
+CONFIG_CCACHE=y
 
-          # irqbalance_tune init.d
-          mkdir -p package/base-files/files/etc/init.d
-          IRQ=package/base-files/files/etc/init.d/irqbalance_tune
-          > $IRQ
-          echo '#!/bin/sh /etc/rc.common' >> $IRQ
-          echo 'START=15' >> $IRQ
-          echo 'start() {' >> $IRQ
-          echo '    irqbalance --oneshot' >> $IRQ
-          echo '}' >> $IRQ
-          chmod +x $IRQ
-          echo "/etc/init.d/irqbalance_tune enable" >> package/base-files/files/etc/rc.local
+# ===== 镜像格式 =====
+CONFIG_TARGET_ROOTFS_INITRAMFS=y
+CONFIG_GRUB_IMAGES=y
+CONFIG_GRUB_EFI_IMAGES=y
+CONFIG_VMDK_IMAGES=y
+CONFIG_VDI_IMAGES=y
+CONFIG_VHDX_IMAGES=y
+CONFIG_QCOW2_IMAGES=y
+CONFIG_TARGET_IMAGES_GZIP=y
+CONFIG_GRUB_TIMEOUT="5"
+CONFIG_GRUB_TITLE="OpenWrt J4125 Optimized"
 
-          # disk_tune init.d
-          DISK=package/base-files/files/etc/init.d/disk_tune
-          > $DISK
-          echo '#!/bin/sh /etc/rc.common' >> $DISK
-          echo 'START=16' >> $DISK
-          echo 'start() {' >> $DISK
-          echo '    mount -o remount,noatime /' >> $DISK
-          echo '    mount -o remount,noatime /overlay' >> $DISK
-          echo '    for disk in /sys/block/sd* /sys/block/nvme*;do' >> $DISK
-          echo '      [ -e "$disk/queue/scheduler" ] && echo none > $disk/queue/scheduler' >> $DISK
-          echo '    done' >> $DISK
-          echo '    uci set system.@system[0].log_size="64"' >> $DISK
-          echo '    uci set system.@system[0].log_proto="none"' >> $DISK
-          echo '    uci set system.@system[0].cronfstrim_enabled="1"' >> $DISK
-          echo '    uci set system.@system[0].cronfstrim_interval="weekly"' >> $DISK
-          echo '    uci commit system' >> $DISK
-          echo '}' >> $DISK
-          chmod +x $DISK
-          echo "/etc/init.d/disk_tune enable" >> package/base-files/files/etc/rc.local
+# ===== CPU 优化 =====
+CONFIG_TARGET_OPTIMIZATION="-O2 -pipe -march=goldmont-plus -mtune=goldmont-plus -fomit-frame-pointer"
 
-          # rc.local disable unused service
-          echo "/etc/init.d/umountd disable" >> package/base-files/files/etc/rc.local
-          echo "/etc/init.d/sysntpd disable" >> package/base-files/files/etc/rc.local
-          echo "/etc/init.d/dropbear disable; /etc/init.d/dropbear enable" >> package/base-files/files/etc/rc.local
+# ===== 内核配置 =====
+CONFIG_KERNEL_BUILD_USER="builder"
+CONFIG_KERNEL_BUILD_DOMAIN="openwrt.local"
+CONFIG_KERNEL_PRINTK=y
+CONFIG_KERNEL_SWAP=y
+CONFIG_KERNEL_KALLSYMS=y
+CONFIG_KERNEL_DEBUG_INFO=n
+CONFIG_KERNEL_DEBUG_KERNEL=n
 
-          # modify config_generate: lan ip, timezone, hostname
-          sed -i 's/192.168.1.1/192.168.5.1/g' package/base-files/files/bin/config_generate
-          sed -i '/set system.@system\[0\].timezone/d' package/base-files/files/bin/config_generate
-          echo 'set system.@system[0].timezone=CST-8' >> package/base-files/files/bin/config_generate
-          echo 'set system.@system[0].zonename=Asia/Shanghai' >> package/base-files/files/bin/config_generate
-          sed -i 's/OpenWrt/J4125-Router/g' package/base-files/files/bin/config_generate
+# ===== 网络驱动 =====
+CONFIG_PACKAGE_kmod-igc=m
+CONFIG_PACKAGE_kmod-e1000=m
+CONFIG_PACKAGE_kmod-e1000e=m
+CONFIG_PACKAGE_kmod-igb=m
+CONFIG_PACKAGE_kmod-ixgbe=m
+CONFIG_PACKAGE_kmod-r8169=m
+CONFIG_PACKAGE_kmod-vmxnet3=m
 
-          # write uhttpd config file, no heredoc
-          mkdir -p package/base-files/files/etc/config
-          UHTTPD=package/base-files/files/etc/config/uhttpd
-          > $UHTTPD
-          echo "config uhttpd 'main'" >> $UHTTPD
-          echo "        list listen_http '0.0.0.0:80'" >> $UHTTPD
-          echo "        list listen_http '[::]:80'" >> $UHTTPD
-          echo "        list listen_https '0.0.0.0:443'" >> $UHTTPD
-          echo "        list listen_https '[::]:443'" >> $UHTTPD
-          echo "        option redirect_https '0'" >> $UHTTPD
-          echo "        option home '/www'" >> $UHTTPD
-          echo "        option rfc1918_filter '1'" >> $UHTTPD
-          echo "        option max_requests '32'" >> $UHTTPD
-          echo "        option max_keepalive '60'" >> $UHTTPD
-          echo "        option http_timeout '120'" >> $UHTTPD
-          echo "        option cert '/etc/uhttpd.crt'" >> $UHTTPD
-          echo "        option key '/etc/uhttpd.key'" >> $UHTTPD
-          echo "        option cgi_prefix '/cgi-bin'" >> $UHTTPD
-          echo "        list lua_prefix '/cgi-bin/luci'" >> $UHTTPD
-          echo "        list lua_handler '/usr/lib/lua/luci/sgi/uhttpd.lua'" >> $UHTTPD
-          echo "        option script_timeout '60'" >> $UHTTPD
-          echo "        option network_timeout '30'" >> $UHTTPD
-          echo "        option tcp_keepalive '1'" >> $UHTTPD
+# ===== 虚拟化支持 =====
+CONFIG_PACKAGE_open-vm-tools=m
+CONFIG_PACKAGE_kmod-vmw_pvscsi=m
+CONFIG_PACKAGE_kmod-vmwgfx=m
+CONFIG_PACKAGE_qemu-ga=m
 
-      - name: Feeds update & install
-        run: |
-          cd openwrt
-          ./scripts/feeds update -a || ./scripts/feeds update -a
-          ./scripts/feeds install -a
+# ===== 显卡驱动 =====
+CONFIG_PACKAGE_kmod-i915=m
+CONFIG_PACKAGE_kmod-drm=m
+CONFIG_PACKAGE_kmod-drm-kms-helper=m
+CONFIG_PACKAGE_intel-gpu-firmware=m
+CONFIG_PACKAGE_intel-ucode=m
 
-      - name: Add third‑party packages
-        run: |
-          cd openwrt
-          git clone --depth 1 https://github.com/Openwrt-Passwall/openwrt-passwall package/openwrt-passwall
-          git clone --depth 1 https://github.com/Openwrt-Passwall/openwrt-passwall-packages package/openwrt-passwall-packages
-          git clone --depth 1 https://github.com/jerrykuku/luci-theme-argon package/luci-theme-argon
-          git clone --depth 1 https://github.com/rufengsuixing/luci-app-adguardhome package/luci-app-adguardhome
+# ===== 存储驱动 =====
+CONFIG_PACKAGE_kmod-usb3=y
+CONFIG_PACKAGE_kmod-usb-xhci=y
+CONFIG_PACKAGE_kmod-usb-storage=y
+CONFIG_PACKAGE_kmod-usb-storage-uas=y
 
-      - name: Generate .config
-        run: |
-          cd openwrt
-          make defconfig
-          echo 'CONFIG_TARGET_x86=y' >> .config
-          echo 'CONFIG_TARGET_x86_64=y' >> .config
-          echo 'CONFIG_TARGET_x86_64_Generic=y' >> .config
-          echo 'CONFIG_TARGET_IMAGES_GZIP=y' >> .config
-          echo 'CONFIG_TARGET_IMAGES_COMBINED_EFI=y' >> .config
-          echo 'CONFIG_TARGET_IMAGES_COMBINED_VMDK=y' >> .config
-          echo 'CONFIG_PACKAGE_kmod-net-igc=y' >> .config
-          echo 'CONFIG_PACKAGE_kmod-igc=y' >> .config
-          echo 'CONFIG_PACKAGE_kmod-usb-core=y' >> .config
-          echo 'CONFIG_PACKAGE_kmod-usb-xhci=y' >> .config
-          echo 'CONFIG_PACKAGE_kmod-sound-hda-intel=y' >> .config
-          echo 'CONFIG_PACKAGE_kmod-i915=y' >> .config
-          echo 'CONFIG_PACKAGE_kmod-i2c-i801=y' >> .config
-          echo 'CONFIG_PACKAGE_ipv6helper=y' >> .config
-          echo 'CONFIG_PACKAGE_odhcpd-ipv6=y' >> .config
-          echo 'CONFIG_PACKAGE_6in4=y' >> .config
-          echo 'CONFIG_PACKAGE_6rd=y' >> .config
-          echo 'CONFIG_PACKAGE_luci-proto-dhcpv6=y' >> .config
-          echo 'CONFIG_PACKAGE_dnsmasq-full=y' >> .config
-          echo 'CONFIG_PACKAGE_kmod-nft-offload=y' >> .config
-          echo 'CONFIG_PACKAGE_kmod-flow-offload=y' >> .config
-          echo 'CONFIG_PACKAGE_cpufrequtils=y' >> .config
-          echo 'CONFIG_CPU_FREQ_DEFAULT_GOV_PERFORMANCE=y' >> .config
-          echo 'CONFIG_PACKAGE_irqbalance=y' >> .config
-          echo '# CONFIG_PACKAGE_odhcpd-ipv6only is not set' >> .config
-          echo '# CONFIG_PACKAGE_ppp is not set' >> .config
-          echo '# CONFIG_PACKAGE_pppoe-discovery is not set' >> .config
-          echo 'CONFIG_PACKAGE_luci=y' >> .config
-          echo 'CONFIG_PACKAGE_luci-theme-argon=y' >> .config
-          echo 'CONFIG_PACKAGE_luci-i18n-zh-cn=y' >> .config
-          echo 'CONFIG_PACKAGE_luci-app-passwall=y' >> .config
-          echo 'CONFIG_PACKAGE_luci-app-adguardhome=y' >> .config
-          echo 'CONFIG_PACKAGE_adguardhome=y' >> .config
-          echo 'CONFIG_PACKAGE_sqm-scripts=y' >> .config
-          echo 'CONFIG_PACKAGE_luci-app-sqm=y' >> .config
-          echo 'CONFIG_PACKAGE_iperf3=y' >> .config
-          echo 'CONFIG_PACKAGE_tcpdump=y' >> .config
-          echo 'CONFIG_PACKAGE_curl=y' >> .config
-          echo 'CONFIG_PACKAGE_wget-ssl=y' >> .config
-          echo 'CONFIG_PACKAGE_nload=y' >> .config
-          echo 'CONFIG_PACKAGE_htop=y' >> .config
-          make oldconfig
+# ===== 文件系统 =====
+CONFIG_PACKAGE_kmod-fs-ext4=y
+CONFIG_PACKAGE_kmod-fs-vfat=y
+CONFIG_PACKAGE_kmod-fs-exfat=m
+CONFIG_PACKAGE_kmod-fs-ntfs=m
+CONFIG_PACKAGE_kmod-fs-f2fs=m
+CONFIG_PACKAGE_kmod-fs-btrfs=m
 
-      - name: Compile firmware
-        run: |
-          cd openwrt
-          make clean
-          make -j2 V=s
+# ===== 网络栈优化 =====
+CONFIG_PACKAGE_kmod-mq=y
+CONFIG_PACKAGE_kmod-ifb=y
+CONFIG_PACKAGE_kmod-sched-core=y
+CONFIG_PACKAGE_kmod-sched-cake=y
+CONFIG_PACKAGE_kmod-sched-flower=y
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: OpenWrt-J4125-firmware
-          path: |
-            openwrt/bin/targets/x86/64/*.gz
-            openwrt/bin/targets/x86/64/*.vmdk
+# ===== 基础系统 =====
+CONFIG_PACKAGE_luci=y
+CONFIG_PACKAGE_luci-ssl=y
+CONFIG_PACKAGE_luci-ssl-openssl=y
+
+# ===== 中文本地化 =====
+CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
+CONFIG_PACKAGE_luci-i18n-opkg-zh-cn=y
+CONFIG_PACKAGE_luci-i18n-firewall-zh-cn=y
+
+# ===== IPv6 =====
+CONFIG_PACKAGE_ipv6helper=y
+CONFIG_PACKAGE_odhcp6c=y
+CONFIG_PACKAGE_odhcpd-ipv6only=y
+CONFIG_PACKAGE_luci-proto-ipv6=y
+CONFIG_PACKAGE_6in4=y
+CONFIG_PACKAGE_6rd=y
+CONFIG_PACKAGE_6to4=y
+
+# ===== WireGuard =====
+CONFIG_PACKAGE_wireguard-tools=y
+CONFIG_PACKAGE_kmod-wireguard=y
+CONFIG_PACKAGE_luci-app-wireguard=y
+CONFIG_PACKAGE_luci-i18n-wireguard-zh-cn=y
+
+# ===== PassWall =====
+CONFIG_PACKAGE_luci-app-passwall=y
+CONFIG_PACKAGE_luci-i18n-passwall-zh-cn=y
+CONFIG_PACKAGE_xray-core=y
+CONFIG_PACKAGE_v2ray-geoip=y
+CONFIG_PACKAGE_v2ray-geosite=y
+CONFIG_PACKAGE_sing-box=y
+CONFIG_PACKAGE_hysteria=y
+CONFIG_PACKAGE_tuic-client=y
+CONFIG_PACKAGE_shadowsocks-rust=y
+CONFIG_PACKAGE_chinadns-ng=y
+CONFIG_PACKAGE_dnsmasq-full=y
+
+# ===== AdGuard Home =====
+CONFIG_PACKAGE_luci-app-adguardhome=y
+CONFIG_PACKAGE_luci-i18n-adguardhome-zh-cn=y
+
+# ===== DDNS =====
+CONFIG_PACKAGE_ddns-scripts=y
+CONFIG_PACKAGE_luci-app-ddns=y
+CONFIG_PACKAGE_luci-i18n-ddns-zh-cn=y
+
+# ===== UPnP =====
+CONFIG_PACKAGE_miniupnpd=y
+CONFIG_PACKAGE_luci-app-upnp=y
+CONFIG_PACKAGE_luci-i18n-upnp-zh-cn=y
+
+# ===== 系统工具 =====
+CONFIG_PACKAGE_bash=y
+CONFIG_PACKAGE_curl=y
+CONFIG_PACKAGE_wget=y
+CONFIG_PACKAGE_htop=y
+CONFIG_PACKAGE_nano=y
+CONFIG_PACKAGE_iperf3=y
+CONFIG_PACKAGE_ethtool=y
+CONFIG_PACKAGE_tcpdump=y
+CONFIG_PACKAGE_sysstat=y
+CONFIG_PACKAGE_lm-sensors=y
+CONFIG_PACKAGE_pciutils=y
+CONFIG_PACKAGE_usbutils=y
+
+# ===== 性能优化 =====
+CONFIG_PACKAGE_irqbalance=y
+CONFIG_PACKAGE_schedutils=y
+
+# ===== 主题 =====
+CONFIG_PACKAGE_luci-theme-argon=y
+CONFIG_PACKAGE_luci-theme-material=y
+
+# ===== 监控 =====
+CONFIG_PACKAGE_luci-app-statistics=y
+CONFIG_PACKAGE_vnstat=y
+CONFIG_PACKAGE_vnstati=y
+
+# ===== 网络工具 =====
+CONFIG_PACKAGE_nmap=y
+CONFIG_PACKAGE_traceroute=y
+CONFIG_PACKAGE_mtr=y
+EOF
+        
+        # 应用配置
+        make defconfig
+        
+        # 保存配置备份
+        cp .config config.buildinfo
+
+    - name: Download packages
+      run: |
+        cd ${BUILD_DIR}
+        echo "Downloading packages..."
+        make download -j$(nproc) V=s
+
+    - name: Compile OpenWrt
+      id: compile
+      run: |
+        cd ${BUILD_DIR}
+        
+        echo "Starting compilation..."
+        if make -j$(($(nproc) + 1)) V=s 2>&1 | tee build.log; then
+          echo "Build successful"
+          echo "build_success=true" >> $GITHUB_OUTPUT
+        else
+          echo "Build failed"
+          echo "build_success=false" >> $GITHUB_OUTPUT
+          echo "=== Last 50 lines of log ==="
+          tail -50 build.log
+          exit 1
+        fi
+
+    - name: Check build artifacts
+      if: success()
+      run: |
+        cd ${BUILD_DIR}/bin/targets/x86/64/
+        
+        echo "Checking build artifacts..."
+        ls -lh
+        
+        # 验证必要文件存在
+        if [ -f "openwrt-x86-64-generic-ext4-combined.img.gz" ]; then
+          echo "Found: ext4-combined"
+        else
+          echo "Missing: ext4-combined"
+        fi
+        
+        if [ -f "openwrt-x86-64-generic-ext4-combined-efi.img.gz" ]; then
+          echo "Found: ext4-combined-efi"
+        else
+          echo "Missing: ext4-combined-efi"
+        fi
+
+    - name: Convert to virtual disk formats
+      if: success()
+      run: |
+        cd ${BUILD_DIR}/bin/targets/x86/64/
+        
+        echo "Starting format conversion..."
+        
+        # 解压所有镜像
+        gunzip -k *.img.gz 2>/dev/null || true
+        
+        # 转换函数
+        convert_img() {
+          local img=$1
+          local format=$2
+          local dir=$3
+          local ext=$4
+          
+          local name=$(basename "$img" .img)
+          local output="${dir}/${name}.${ext}"
+          
+          echo "Converting: $img -> $format"
+          if qemu-img convert -f raw -O "$format" "$img" "$output"; then
+            gzip -9 "$output"
+            echo "Done: ${output}.gz"
+          else
+            echo "Failed: $img -> $format"
+          fi
+        }
+        
+        # 转换所有镜像
+        for img in *.img; do
+          if [ -f "$img" ]; then
+            echo "Processing: $img"
+            
+            # VMDK
+            convert_img "$img" "vmdk" "${OUTPUT_DIR}/vmdk" "vmdk"
+            
+            # VDI
+            convert_img "$img" "vdi" "${OUTPUT_DIR}/vdi" "vdi"
+            
+            # VHDX
+            convert_img "$img" "vhdx" "${OUTPUT_DIR}/vhdx" "vhdx"
+            
+            # QCOW2
+            convert_img "$img" "qcow2" "${OUTPUT_DIR}/qcow2" "qcow2"
+          fi
+        done
+        
+        # 复制原始镜像
+        cp *.img.gz "${OUTPUT_DIR}/img/" 2>/dev/null || true
+        
+        echo "Format conversion completed"
+
+    - name: Generate checksums and docs
+      if: success()
+      run: |
+        cd ${OUTPUT_DIR}
+        
+        echo "Generating checksums..."
+        find . -type f -name "*.gz" -exec sha256sum {} \; > SHA256SUMS
+        find . -type f -name "*.gz" -exec md5sum {} \; > MD5SUMS
+        
+        # 生成构建信息
+        cat > BUILD_INFO.txt << EOF
+OpenWrt J4125 Optimized Build
+Build Date: $(date '+%Y-%m-%d %H:%M:%S')
+Target: x86_64
+Platform: Intel J4125 (Gemini Lake)
+Features:
+- Intel I225-V 2.5G Driver
+- Goldmont Plus CPU Optimization
+- AdGuard Home
+- PassWall (Xray/Sing-box/Hysteria)
+- WireGuard VPN
+- IPv6 Support
+- VMware Tools
+- Chinese Language
+EOF
+
+    - name: Create Release
+      if: success() && github.event_name != 'schedule'
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ env.BUILD_DATE }}
+        name: OpenWrt J4125 Build ${{ env.BUILD_DATE }}
+        body_path: ${{ env.OUTPUT_DIR }}/BUILD_INFO.txt
+        files: |
+          ${{ env.OUTPUT_DIR }}/img/*
+          ${{ env.OUTPUT_DIR }}/vmdk/*
+          ${{ env.OUTPUT_DIR }}/vdi/*
+          ${{ env.OUTPUT_DIR }}/vhdx/*
+          ${{ env.OUTPUT_DIR }}/qcow2/*
+          ${{ env.OUTPUT_DIR }}/*SUMS
+          ${{ env.OUTPUT_DIR }}/BUILD_INFO.txt
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Upload artifacts
+      if: success() && github.event_name == 'schedule'
+      uses: actions/upload-artifact@v4
+      with:
+        name: OpenWrt-J4125-${{ env.BUILD_DATE }}
+        path: ${{ env.OUTPUT_DIR }}/**
+        retention-days: 7
+
+    - name: Upload logs on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-logs
+        path: |
+          ${{ env.BUILD_DIR }}/build.log
+          ${{ env.BUILD_DIR }}/config.buildinfo
+        retention-days: 3
