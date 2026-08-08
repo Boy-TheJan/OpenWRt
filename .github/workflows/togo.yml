@@ -45,6 +45,7 @@ jobs:
           CONFIG_TARGET_x86_64=y
           CONFIG_TARGET_ROOTFS_EXT4FS=y
           CONFIG_TARGET_ROOTFS_SQUASHFS=y
+          CONFIG_VMDK_IMAGES=y
           CONFIG_GRUB_IMAGES=y
           CONFIG_GRUB_EFI_IMAGES=y
           CONFIG_IPV6=y
