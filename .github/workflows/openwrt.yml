@@ -3,9 +3,8 @@ on:
   repository_dispatch:
   workflow_dispatch:
 env:
-  REPO_URL: https://github.com/openwrt/openwrt
+  REPO_URL: https://github.com/Boy-TheJan/openWrt-Row
   REPO_BRANCH: main
-  FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
   UPLOAD_BIN_DIR: false
   UPLOAD_FIRMWARE: true
